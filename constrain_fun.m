@@ -1,0 +1,134 @@
+function [c,ceq]=constrain_fun(x)
+
+ % ΑΝΑΛΥΣΗ ΜΟΝΤΕΛΟΥ (MODEL ANALYSIS)
+[NumElements,NumNodes,NodeCoords,Density,Elasticity,ElementConnectivity,BoundaryConditions,Forces]=load_data;
+
+% Αρχικοποίηση πινάκων και διανυσμάτων (Initialization of matrices and vectors)
+ElementLength = zeros(NumElements,1);
+GlobalStiffness = zeros(2*NumNodes,2*NumNodes);
+LocalStiffness = zeros(4,4);
+
+% Αρχικοποίηση διανυσμάτων για τις τρεις φορτίσεις (Initialization for three load cases)
+DisplacementsLoad1 = zeros(2*NumNodes,1);
+StrainLoad1 = zeros(NumElements,1);
+StressLoad1 = zeros(NumElements,1);
+
+DisplacementsLoad2 = zeros(2*NumNodes,1);
+StrainLoad2 = zeros(NumElements,1);
+StressLoad2 = zeros(NumElements,1);
+
+DisplacementsLoad3 = zeros(2*NumNodes,1);
+StrainLoad3 = zeros(NumElements,1);
+StressLoad3 = zeros(NumElements,1);
+
+FreeDofs = [];
+FixedDofs = [];
+
+% ΑΝΑΛΥΣΗ ΣΤΟΙΧΕΙΩΝ (FINITE ELEMENT ANALYSIS)
+for i=1:NumElements
+    % Υπολογισμός του μήκους του i-ου στοιχείου (Compute the length of the i-th element)
+    dx = NodeCoords(ElementConnectivity(i,2),1) - NodeCoords(ElementConnectivity(i,1),1);
+    dy = NodeCoords(ElementConnectivity(i,2),2) - NodeCoords(ElementConnectivity(i,1),2);
+    ElementLength(i) = sqrt(dx^2 + dy^2); 
+
+    % Υπολογισμός της γωνίας του i-ου στοιχείου (Compute the orientation of the i-th element)
+    cosTheta = dx / ElementLength(i);
+    sinTheta = dy / ElementLength(i);
+   
+    k1 = cosTheta^2;
+    k2 = sinTheta^2;
+    k3 = cosTheta * sinTheta;
+
+    % Κατασκευή του τοπικού πίνακα στιβαρότητας για το i-ο στοιχείο (Construct local stiffness matrix for the i-th element)
+    LocalStiffness = x(i)* Elasticity / ElementLength(i) * [ k1  k3 -k1 -k3;
+                                                          k3  k2 -k3 -k2;
+                                                         -k1 -k3  k1  k3;
+                                                         -k3 -k2  k3  k2];                          
+
+    % Ενημέρωση του καθολικού πίνακα στιβαρότητας (Update the global stiffness matrix)
+    ElementDofs = [2*ElementConnectivity(i,1)-1; 2*ElementConnectivity(i,1); 2*ElementConnectivity(i,2)-1; 2*ElementConnectivity(i,2)];
+    GlobalStiffness(ElementDofs,ElementDofs) = GlobalStiffness(ElementDofs,ElementDofs) + LocalStiffness;
+end
+
+% Εύρεση των ελεύθερων και των σταθερών βαθμών ελευθερίας (Find free and fixed degrees of freedom)
+BoundaryConditions = reshape(transpose(BoundaryConditions),2*NumNodes,1);
+FreeDofs = find(BoundaryConditions==0);
+FixedDofs = find(BoundaryConditions==1);
+
+% Κατασκευή του διανύσματος των περιορισμών c (Construct the constraint vector c)
+c=[];
+
+% Φορτίσεις (Loads)
+Forces = reshape(transpose(Forces),2*NumNodes,1);
+Temp = Forces(FreeDofs,1);
+ForcesLoad1 = Temp.';
+% Υπολογισμός των μετατοπίσεων για την πρώτη φόρτιση (Compute displacements for the first load case)
+DisplacementsLoad1(FreeDofs,1) = (GlobalStiffness(FreeDofs,FreeDofs))^-1 * ForcesLoad1';
+% Υπολογισμός των επιμήκυνσης και τάσεων για την πρώτη φόρτιση (Compute strains and stresses for the first load case)
+DUX1 = DisplacementsLoad1(2*ElementConnectivity(:,2)-1) - DisplacementsLoad1(2*ElementConnectivity(:,1)-1);
+DUY1 = DisplacementsLoad1(2*ElementConnectivity(:,2)) - DisplacementsLoad1(2*ElementConnectivity(:,1));
+StrainLoad1 = 1 ./ ElementLength .* (cosTheta' .* DUX1 + sinTheta' .* DUY1);
+StressLoad1 = Elasticity(1) * StrainLoad1;
+
+% Υπολογισμός των μετατοπίσεων για τη δεύτερη φόρτιση (Compute displacements for the second load case)
+Temp2 = Forces(FreeDofs,1);
+ForcesLoad2 = Temp2.';
+DisplacementsLoad2(FreeDofs,1) = (GlobalStiffness(FreeDofs,FreeDofs))^-1 * ForcesLoad2';
+DUX2 = DisplacementsLoad2(2*ElementConnectivity(:,2)-1) - DisplacementsLoad2(2*ElementConnectivity(:,1)-1);
+DUY2 = DisplacementsLoad2(2*ElementConnectivity(:,2)) - DisplacementsLoad2(2*ElementConnectivity(:,1));
+StrainLoad2 = 1 ./ ElementLength .* (cosTheta' .* DUX2 + sinTheta' .* DUY2);
+StressLoad2 = Elasticity(1) * StrainLoad2;
+
+% Υπολογισμός των μετατοπίσεων για τη τρίτη φόρτιση (Compute displacements for the third load case)
+Temp3 = Forces(FreeDofs,1);
+ForcesLoad3 = Temp3.';
+DisplacementsLoad3(FreeDofs,1) = (GlobalStiffness(FreeDofs,FreeDofs))^-1 * ForcesLoad3';
+DUX3 = DisplacementsLoad3(2*ElementConnectivity(:,2)-1) - DisplacementsLoad3(2*ElementConnectivity(:,1)-1);
+DUY3 = DisplacementsLoad3(2*ElementConnectivity(:,2)) - DisplacementsLoad3(2*ElementConnectivity(:,1));
+StrainLoad3 = 1 ./ ElementLength .* (cosTheta' .* DUX3 + sinTheta' .* DUY3);
+StressLoad3 = Elasticity(1) * StrainLoad3;
+
+
+% Ορισμός των επιτρεπόμενων ορίων (Define allowable limits)
+AllowableStressPositive = 150;
+AllowableStressNegative = -140;
+AllowableDisplacementU = 2.5;
+AllowableDisplacementV = 5;
+
+% Υπολογισμός των περιορισμών βάσει των επιτρεπόμενων τιμών (Compute constraints based on allowable values)
+StressConstraintsLoad1 = [StressLoad1 - AllowableStressPositive; AllowableStressNegative - StressLoad1];
+StressConstraintsLoad2 = [StressLoad2 - AllowableStressPositive; AllowableStressNegative - StressLoad2];
+StressConstraintsLoad3 = [StressLoad3 - AllowableStressPositive; AllowableStressNegative - StressLoad3];
+
+
+
+DisplacementConstraints = [abs(DisplacementsLoad1(9:12)) - [AllowableDisplacementU; AllowableDisplacementV; AllowableDisplacementU; AllowableDisplacementV]];
+
+% Συγκέντρωση όλων των περιορισμών σε ένα διάνυσμα (Aggregate all constraints into a single vector)
+c = [StressConstraintsLoad1; StressConstraintsLoad2; StressConstraintsLoad3; DisplacementConstraints];
+
+% Μη γραμμικοί ισοτικοί περιορισμοί (Non-linear equality constraints)
+ceq = [];
+
+end
+
+% Main executable
+
+% Φορτίσεις (Loads)
+Forces = reshape(transpose(Forces),2*NumNodes,1);
+
+[DisplacementsLoad1, StrainLoad1, StressLoad1] = computeLoadCase(Forces, FreeDofs, GlobalStiffness, ElementConnectivity, ElementLength, cosTheta, sinTheta, Elasticity);
+[DisplacementsLoad2, StrainLoad2, StressLoad2] = computeLoadCase(Forces, FreeDofs, GlobalStiffness, ElementConnectivity, ElementLength, cosTheta, sinTheta, Elasticity);
+[DisplacementsLoad3, StrainLoad3, StressLoad3] = computeLoadCase(Forces, FreeDofs, GlobalStiffness, ElementConnectivity, ElementLength, cosTheta, sinTheta, Elasticity);
+
+% ... rest of your code ...
+
+function [Displacements, Strain, Stress] = computeLoadCase(Forces, FreeDofs, GlobalStiffness, ElementConnectivity, ElementLength, cosTheta, sinTheta, Elasticity)
+    Temp = Forces(FreeDofs,1);
+    ForcesLoad = Temp.';
+    Displacements(FreeDofs,1) = (GlobalStiffness(FreeDofs,FreeDofs))^-1 * ForcesLoad';
+    DUX = Displacements(2*ElementConnectivity(:,2)-1) - Displacements(2*ElementConnectivity(:,1)-1);
+    DUY = Displacements(2*ElementConnectivity(:,2)) - Displacements(2*ElementConnectivity(:,1));
+    Strain = 1 ./ ElementLength .* (cosTheta' .* DUX + sinTheta' .* DUY);
+    Stress = Elasticity(1) * Strain;
+end
